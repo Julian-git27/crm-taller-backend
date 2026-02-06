@@ -43,7 +43,7 @@ export class MailService {
     copia?: string
   ) {
     const mailOptions: nodemailer.SendMailOptions = {
-      from: `"Taller Mecánico" <${process.env.MAIL_FROM || 'no-reply@taller.com'}>`,
+      from:  process.env.MAIL_FROM,
       to: emailDestino,
       cc: copia,
       subject: asunto,
