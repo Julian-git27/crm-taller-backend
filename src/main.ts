@@ -7,24 +7,23 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
-    origin: (origin, callback) => {
-      const allowedOrigins = [
-        'http://localhost:3000',               // 👈 local
-        'https://TU_FRONTEND.onrender.com',    // 👈 producción
-      ];
+  origin: (origin, callback) => {
+    const allowedOrigins = [
+      'http://localhost:3000',
+      process.env.FRONTEND_URL,
+    ];
 
-      // Permitir llamadas sin origin (Postman, mobile, etc.)
-      if (!origin) return callback(null, true);
+    if (!origin) return callback(null, true);
 
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
 
-      return callback(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-  });
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+});
 
   app.useGlobalPipes(new ValidationPipe());
 
