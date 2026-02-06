@@ -1,36 +1,19 @@
 // src/mail/mail.service.ts
 import { Injectable } from '@nestjs/common';
-import * as nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
 @Injectable()
 export class MailService {
-  private transporter: nodemailer.Transporter;
+  private resend: Resend;
 
   constructor() {
-    this.transporter = nodemailer.createTransport({
-      host: process.env.MAIL_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.MAIL_PORT || '587'),
-      secure: process.env.MAIL_SECURE === 'true',
-      auth: {
-        user: process.env.MAIL_USER,
-        pass: process.env.MAIL_PASSWORD,
-      },
-      tls: {
-        rejectUnauthorized: false
-      }
-    });
+    const apiKey = process.env.RESEND_API_KEY;
     
-    // Verificar conexión
-    this.verificarConexion();
-  }
-
-  private async verificarConexion() {
-    try {
-      await this.transporter.verify();
-      console.log('✅ Servicio de correo configurado correctamente');
-    } catch (error) {
-      console.error('❌ Error configurando servicio de correo:', error);
+    if (!apiKey) {
+      console.warn('⚠️ RESEND_API_KEY no está definida. El servicio de correo no funcionará.');
     }
+    
+    this.resend = new Resend(apiKey);
   }
 
   async enviarFactura(
@@ -42,36 +25,58 @@ export class MailService {
     pdfBuffer: Buffer,
     copia?: string
   ) {
-    const mailOptions: nodemailer.SendMailOptions = {
-      from:  process.env.MAIL_FROM,
-      to: emailDestino,
-      cc: copia,
-      subject: asunto,
-      html: this.generarHtmlCorreo(nombreCliente, facturaId, mensaje, pdfBuffer.length),
-      attachments: [
-        {
-          filename: `factura-${facturaId}.pdf`,
-          content: pdfBuffer,
-          contentType: 'application/pdf',
-        },
-      ],
-    };
-
     try {
-      const info = await this.transporter.sendMail(mailOptions);
+      console.log('📤 Enviando factura por Resend:', {
+        to: emailDestino,
+        facturaId,
+        subject: asunto,
+        hasAttachment: !!pdfBuffer,
+        bufferSize: pdfBuffer.length
+      });
+
+      // Convertir Buffer a Base64
+      const pdfBase64 = pdfBuffer.toString('base64');
       
-      console.log('📧 Correo enviado exitosamente:', {
-        messageId: info.messageId,
+      // Configurar el correo
+      const emailConfig: any = {
+        from: this.getFromEmail(),
+        to: emailDestino,
+        subject: asunto,
+        html: this.generarHtmlCorreo(nombreCliente, facturaId, mensaje, pdfBuffer.length),
+        attachments: [
+          {
+            filename: `factura-${facturaId}.pdf`,
+            content: pdfBase64,
+          },
+        ],
+      };
+
+      // Agregar CC si existe
+      if (copia) {
+        emailConfig.cc = copia;
+      }
+
+      // Enviar el correo
+      const { data, error } = await this.resend.emails.send(emailConfig);
+
+      if (error) {
+        console.error('❌ Error Resend:', error);
+        throw new Error(`Error Resend: ${error.message}`);
+      }
+
+      console.log('✅ Correo enviado exitosamente:', {
+        id: data?.id,
         to: emailDestino,
         facturaId,
         timestamp: new Date().toISOString(),
       });
-      
-      return { 
-        success: true, 
-        messageId: info.messageId,
-        info 
+
+      return {
+        success: true,
+        messageId: data?.id,
+        data
       };
+
     } catch (error: any) {
       console.error('❌ Error enviando correo:', {
         error: error.message,
@@ -82,6 +87,80 @@ export class MailService {
     }
   }
 
+  async enviarCorreoVencimiento(
+    emailDestino: string,
+    asunto: string,
+    mensaje: string,
+    datosVehiculo?: {
+      placa: string;
+      marca: string;
+      modelo: string;
+      tipoDocumento: string;
+      fechaVencimiento: string;
+      diasRestantes: number;
+      kilometraje?: number;
+    }
+  ) {
+    try {
+      console.log('📤 Enviando recordatorio por Resend:', {
+        to: emailDestino,
+        subject: asunto,
+        placa: datosVehiculo?.placa,
+        timestamp: new Date().toISOString()
+      });
+
+      const { data, error } = await this.resend.emails.send({
+        from: this.getFromEmail(),
+        to: emailDestino,
+        subject: asunto,
+        html: this.generarHtmlRecordatorio(mensaje, datosVehiculo),
+      });
+
+      if (error) {
+        console.error('❌ Error Resend:', error);
+        throw new Error(`Error Resend: ${error.message}`);
+      }
+
+      console.log('✅ Recordatorio enviado:', {
+        id: data?.id,
+        to: emailDestino,
+        placa: datosVehiculo?.placa,
+        tipo: datosVehiculo?.tipoDocumento,
+        timestamp: new Date().toISOString(),
+      });
+
+      return {
+        success: true,
+        messageId: data?.id,
+        data
+      };
+
+    } catch (error: any) {
+      console.error('❌ Error enviando recordatorio:', {
+        error: error.message,
+        to: emailDestino,
+        placa: datosVehiculo?.placa,
+      });
+      throw new Error(`Error al enviar recordatorio: ${error.message}`);
+    }
+  }
+
+  // Método para obtener el email del remitente
+  private getFromEmail(): string {
+    const fromEmail = process.env.MAIL_FROM;
+    
+    if (fromEmail && fromEmail.includes('@')) {
+      // Si MAIL_FROM está definido y parece un email válido, usarlo
+      return fromEmail;
+    }
+    
+    // Si no hay MAIL_FROM válido, usar uno de Resend
+    // NOTA: Para usar tu propio dominio, debes verificarlo en Resend
+    return 'Taller Mecánico <onboarding@resend.dev>';
+  }
+
+  // 🔹 Mantén tus métodos HTML iguales - NO CAMBIES NADA 🔹
+  
   private generarHtmlCorreo(
     nombreCliente: string,
     facturaId: number,
@@ -239,60 +318,6 @@ export class MailService {
 </body>
 </html>
 `;
-  }
-
-  async enviarCorreoVencimiento(
-    emailDestino: string,
-    asunto: string,
-    mensaje: string,
-    datosVehiculo?: {
-      placa: string;
-      marca: string;
-      modelo: string;
-      tipoDocumento: string;
-      fechaVencimiento: string;
-      diasRestantes: number;
-      kilometraje?: number;
-    }
-  ) {
-    // Log para debugging en producción
-    console.log('📦 Datos vehículo recibidos para recordatorio:', {
-      datosVehiculo,
-      emailDestino,
-      timestamp: new Date().toISOString()
-    });
-
-    const mailOptions: nodemailer.SendMailOptions = {
-      from: `"Taller Mecánico - Recordatorios" <${process.env.MAIL_FROM || 'no-reply@taller.com'}>`,
-      to: emailDestino,
-      subject: asunto,
-      html: this.generarHtmlRecordatorio(mensaje, datosVehiculo),
-    };
-
-    try {
-      const info = await this.transporter.sendMail(mailOptions);
-      
-      console.log('📧 Recordatorio enviado:', {
-        messageId: info.messageId,
-        to: emailDestino,
-        placa: datosVehiculo?.placa,
-        tipo: datosVehiculo?.tipoDocumento,
-        timestamp: new Date().toISOString(),
-      });
-      
-      return { 
-        success: true, 
-        messageId: info.messageId,
-        info 
-      };
-    } catch (error: any) {
-      console.error('❌ Error enviando recordatorio:', {
-        error: error.message,
-        to: emailDestino,
-        placa: datosVehiculo?.placa,
-      });
-      throw new Error(`Error al enviar recordatorio: ${error.message}`);
-    }
   }
 
   private generarHtmlRecordatorio(
@@ -560,21 +585,26 @@ export class MailService {
 
   // Método para pruebas
   async enviarCorreoPrueba(email: string) {
-    const mailOptions = {
-      from: `"Taller Mecánico" <${process.env.MAIL_FROM}>`,
-      to: email,
-      subject: 'Prueba de configuración - Servicio de Correo',
-      html: `
-        <h1>✅ Configuración de correo exitosa</h1>
-        <p>El servicio de correo del taller está configurado correctamente.</p>
-        <p><strong>Fecha:</strong> ${new Date().toLocaleString()}</p>
-      `,
-    };
-
     try {
-      const info = await this.transporter.sendMail(mailOptions);
-      return { success: true, messageId: info.messageId };
+      const { data, error } = await this.resend.emails.send({
+        from: this.getFromEmail(),
+        to: email,
+        subject: 'Prueba de configuración - Servicio de Correo',
+        html: `
+          <h1>✅ Configuración de correo exitosa</h1>
+          <p>El servicio de correo del taller está configurado correctamente.</p>
+          <p><strong>Fecha:</strong> ${new Date().toLocaleString()}</p>
+          <p><strong>Servicio:</strong> Resend API</p>
+        `,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      return { success: true, messageId: data?.id };
     } catch (error) {
+      console.error('❌ Error en correo de prueba:', error);
       throw error;
     }
   }
