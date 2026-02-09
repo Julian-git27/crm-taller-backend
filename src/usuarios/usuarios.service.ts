@@ -1,5 +1,5 @@
 // src/usuarios/usuarios.service.ts
-import { Injectable, ConflictException } from '@nestjs/common';
+import { Injectable, ConflictException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Usuario, RolUsuario } from './usuarios.entity';
@@ -37,21 +37,22 @@ export class UsuariosService {
     return await this.usuarioRepo.save(usuario);
   }
 
-  async updatePassword(userId: number, newPassword: string) {
-    const usuario = await this.usuarioRepo.findOne({
-      where: { id: userId }
-    });
+ async updatePassword(userId: number, newPassword: string) {
+  const usuario = await this.usuarioRepo.findOne({
+    where: { id: userId }
+  });
 
-    if (!usuario) {
-      throw new Error('Usuario no encontrado');
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    usuario.password = await bcrypt.hash(newPassword, salt);
-
-    return await this.usuarioRepo.save(usuario);
+  if (!usuario) {
+    throw new UnauthorizedException('Usuario no encontrado');
   }
 
+  const salt = await bcrypt.genSalt(10);
+  usuario.password = await bcrypt.hash(newPassword, salt);
+
+  await this.usuarioRepo.save(usuario);
+  
+  return { success: true };
+}
   async update(id: number, data: Partial<Usuario>) {
     const usuario = await this.usuarioRepo.findOne({
       where: { id }
